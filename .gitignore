@@ -1,0 +1,35 @@
+.DS_Store
+node_modules
+/dist
+
+# Functions node_modules (mas não a pasta functions inteira)
+functions/node_modules
+
+# Arquivos sensíveis - NUNCA commitar
+functions/certs/**
+*.p12
+*.pem
+*.key
+*.crt
+
+# Arquivos de ambiente
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+functions/.env
+functions/.env.local
+functions/.env.*.local
+
+# Editor directories and files
+.idea
+.vscode
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.log
+
+
