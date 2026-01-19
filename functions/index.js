@@ -1,6 +1,6 @@
 
-
 const functions = require("firebase-functions");
+const {defineSecret} = require("firebase-functions/params");
 const axios = require("axios");
 const https = require("https");
 const JWT = require("jsonwebtoken");
@@ -8,54 +8,71 @@ const JWT = require("jsonwebtoken");
 const fs = require("fs");
 const path = require("path");
 
-// Carregar variáveis de ambiente
+// Carregar variáveis de ambiente (apenas para desenvolvimento local)
 require("dotenv").config();
 
-// Configurações GerenciaNet - usando variáveis de ambiente
-const certName = process.env.GERENCIANET_CERT_NAME;
-const clientId = process.env.GERENCIANET_CLIENT_ID;
-const clientSecret = process.env.GERENCIANET_CLIENT_SECRET;
-const endPoint = process.env.GERENCIANET_ENDPOINT || "https://pix.api.efipay.com.br";
+// Definir secrets (do Secret Manager ou process.env como fallback)
+const gerencianetClientIdSecret = defineSecret("GERENCIANET_CLIENT_ID");
+const gerencianetClientSecret = defineSecret("GERENCIANET_CLIENT_SECRET");
+const pixKeySecret = defineSecret("PIX_KEY");
+const jwtPandaSecret = defineSecret("JWT_PANDA_SECRET");
 
-// Validação das variáveis obrigatórias
-if (!certName || !clientId || !clientSecret) {
-  console.error("ERRO: Variáveis de ambiente GerenciaNet não configuradas!");
-  console.error("Certifique-se de que functions/.env está configurado corretamente.");
+// Configurações do Firebase Functions Config (ou process.env como fallback)
+/**
+ * Obtém valor de configuração do Firebase Functions Config ou process.env
+ * @param {string} key - Chave da configuração (ex: "gerencianet.cert_name")
+ * @param {string} defaultValue - Valor padrão caso não encontre
+ * @return {string|undefined} Valor da configuração
+ */
+function getConfig(key, defaultValue) {
+  try {
+    const parts = key.split(".");
+    let value = functions.config();
+    for (const part of parts) {
+      value = value[part];
+      if (!value) break;
+    }
+    const envKey = key.replace(/\./g, "_").toUpperCase();
+    return value || process.env[envKey] || defaultValue;
+  } catch {
+    const envKey = key.replace(/\./g, "_").toUpperCase();
+    return process.env[envKey] || defaultValue;
+  }
 }
 
+const certName = getConfig("gerencianet.cert_name");
+const endPoint = getConfig("gerencianet.endpoint", "https://pix.api.efipay.com.br");
+const jwtPandaDrmGroupId = getConfig("jwt_panda.drm_group_id");
+const pandaAuth = getConfig("panda.auth_key");
 
-const cert = fs.readFileSync(
-    path.resolve(__dirname, `./certs/${certName}`),
-);
+// Função helper para obter valores de secrets (com fallback para process.env)
+/**
+ * Obtém valor de secret do Firebase Secret Manager ou process.env
+ * @param {object} secret - Objeto secret do Firebase
+ * @param {string} envKey - Nome da variável de ambiente como fallback
+ * @return {string|undefined} Valor do secret
+ */
+function getSecretValue(secret, envKey) {
+  try {
+    return secret.value() || process.env[envKey];
+  } catch {
+    return process.env[envKey];
+  }
+}
 
-const agent = new https.Agent({
-  pfx: cert,
-  passphrase: "",
-});
-
-const credentials = Buffer.from(
-    `${clientId}:${clientSecret}`,
-).toString("base64");
+// Validação das variáveis obrigatórias (só no carregamento inicial)
+if (!certName) {
+  console.warn(
+      "AVISO: GERENCIANET_CERT_NAME não configurado. " +
+      "Certifique-se de configurar via functions config ou .env",
+  );
+}
 
 // The Firebase Admin SDK to access Firestore.
 const admin = require("firebase-admin");
 const {getAuth} = require("firebase-admin/auth");
 
 admin.initializeApp();
-
-
-// Lendo a chave do config do Firebase ou usando variável de ambiente
-let pandaAuth;
-try {
-  pandaAuth = functions.config().panda?.auth_key || process.env.PANDA_AUTH_KEY;
-  if (!pandaAuth) {
-    throw new Error("PANDA_AUTH_KEY não configurada");
-  }
-} catch (error) {
-  console.error("ERRO ao carregar PANDA_AUTH_KEY:", error.message);
-  console.error("Configure via Firebase Functions config ou variável de ambiente");
-  throw error;
-}
 
 exports.checkCpfExists = functions.https.onCall(async (data, context) => {
   try {
@@ -100,14 +117,47 @@ exports.uploadPandaFile = functions.https.onCall(async (data) => {
       );
     }
 
+    if (!pandaAuth) {
+      throw new functions.https.HttpsError(
+          "failed-precondition",
+          "PANDA_AUTH_KEY não configurada",
+      );
+    }
+
     const pandaId = require("uuid").v4();
 
-    // Criando metadata
-    const metadata = `authorization ${Buffer.from(pandaAuth).toString("base64")}
-    , filename ${Buffer.from(filename).toString("base64")},
-      video_id ${Buffer.from(pandaId).toString("base64")}`;
+    // Criando metadata (deve ser uma única linha sem quebras)
+    const authB64 = Buffer.from(pandaAuth).toString("base64");
+    const filenameB64 = Buffer.from(filename).toString("base64");
+    const videoIdB64 = Buffer.from(pandaId).toString("base64");
+    const metadata =
+        `authorization ${authB64},filename ${filenameB64},video_id ${videoIdB64}`;
 
-    const buffer = Buffer.from(fileBuffer, "base64");
+    // Limpar a string base64 removendo espaços, quebras de linha e
+    // outros caracteres inválidos
+    const cleanBase64 = fileBuffer.replace(/\s/g, "");
+
+    // Validar se é base64 válido
+    if (!/^[A-Za-z0-9+/]*={0,2}$/.test(cleanBase64)) {
+      console.error("uploadPandaFile: String base64 inválida");
+      throw new functions.https.HttpsError(
+          "invalid-argument",
+          "String base64 inválida",
+      );
+    }
+
+    let buffer;
+    try {
+      buffer = Buffer.from(cleanBase64, "base64");
+    } catch (error) {
+      console.error(
+          "uploadPandaFile: Erro ao converter base64 para Buffer:",
+          error);
+      throw new functions.https.HttpsError(
+          "invalid-argument",
+          "Erro ao processar base64: " + error.message,
+      );
+    }
 
     await axios.post("https://uploader-us01.pandavideo.com.br/files", buffer, {
       headers: {
@@ -177,8 +227,39 @@ exports.deleteUser = functions.https.onCall(async (data) => {
   }
 });
 
-exports.gerenciaNetAuth = functions.https.onCall(async () => {
+exports.gerenciaNetAuth = functions.runWith({
+  secrets: ["GERENCIANET_CLIENT_ID", "GERENCIANET_CLIENT_SECRET"],
+}).https.onCall(async () => {
   try {
+    const clientId = getSecretValue(
+        gerencianetClientIdSecret,
+        "GERENCIANET_CLIENT_ID",
+    );
+    const clientSecret = getSecretValue(
+        gerencianetClientSecret,
+        "GERENCIANET_CLIENT_SECRET",
+    );
+
+    if (!clientId || !clientSecret || !certName) {
+      throw new functions.https.HttpsError(
+          "failed-precondition",
+          "Credenciais GerenciaNet não configuradas",
+      );
+    }
+
+    const cert = fs.readFileSync(
+        path.resolve(__dirname, `./certs/${certName}`),
+    );
+
+    const agent = new https.Agent({
+      pfx: cert,
+      passphrase: "",
+    });
+
+    const credentials = Buffer.from(
+        `${clientId}:${clientSecret}`,
+    ).toString("base64");
+
     console.log("gerenciaNetAuth: Iniciando autenticação GerenciaNet");
     const response = await axios({
       method: "POST",
@@ -205,7 +286,9 @@ exports.gerenciaNetAuth = functions.https.onCall(async () => {
   }
 });
 
-exports.generateCob = functions.https.onCall(async (data) => {
+exports.generateCob = functions.runWith({
+  secrets: ["GERENCIANET_CLIENT_ID", "GERENCIANET_CLIENT_SECRET", "PIX_KEY"],
+}).https.onCall(async (data) => {
   try {
     if (!data.accessToken || !data.price) {
       console.error("generateCob: Dados obrigatórios não fornecidos");
@@ -214,6 +297,32 @@ exports.generateCob = functions.https.onCall(async (data) => {
           "AccessToken e price são obrigatórios",
       );
     }
+
+    const clientId = getSecretValue(
+        gerencianetClientIdSecret,
+        "GERENCIANET_CLIENT_ID",
+    );
+    const clientSecret = getSecretValue(
+        gerencianetClientSecret,
+        "GERENCIANET_CLIENT_SECRET",
+    );
+    const pixKey = getSecretValue(pixKeySecret, "PIX_KEY");
+
+    if (!clientId || !clientSecret || !certName) {
+      throw new functions.https.HttpsError(
+          "failed-precondition",
+          "Credenciais GerenciaNet não configuradas",
+      );
+    }
+
+    const cert = fs.readFileSync(
+        path.resolve(__dirname, `./certs/${certName}`),
+    );
+
+    const agent = new https.Agent({
+      pfx: cert,
+      passphrase: "",
+    });
 
     const endpoint = `${endPoint}/v2/cob`;
 
@@ -224,10 +333,10 @@ exports.generateCob = functions.https.onCall(async (data) => {
       valor: {
         original: data.price,
       },
-      chave: process.env.PIX_KEY,
+      chave: pixKey,
       solicitacaoPagador: "Aula",
     };
-    
+
     if (!dataCob.chave) {
       throw new functions.https.HttpsError(
           "failed-precondition",
@@ -257,7 +366,9 @@ exports.generateCob = functions.https.onCall(async (data) => {
   }
 });
 
-exports.jwtPanda = functions.https.onCall(async (data) => {
+exports.jwtPanda = functions.runWith({
+  secrets: ["JWT_PANDA_SECRET"],
+}).https.onCall(async (data) => {
   try {
     if (!data.name || !data.cpf) {
       console.error("jwtPanda: Dados obrigatórios não fornecidos");
@@ -267,22 +378,24 @@ exports.jwtPanda = functions.https.onCall(async (data) => {
       );
     }
 
+    const secret = getSecretValue(jwtPandaSecret, "JWT_PANDA_SECRET");
+    const drmGroupId = jwtPandaDrmGroupId || process.env.JWT_PANDA_DRM_GROUP_ID;
+
     const jwtObj = {
-      drm_group_id: process.env.JWT_PANDA_DRM_GROUP_ID,
+      drm_group_id: drmGroupId,
       string1: "Licenciado para",
       string2: "Nome: " + data.name,
       string3: "CPF: " + data.cpf,
     };
     const expiresIn = 86400;
-    const secret = process.env.JWT_PANDA_SECRET;
-    
+
     if (!secret || !jwtObj.drm_group_id) {
       throw new functions.https.HttpsError(
           "failed-precondition",
           "Configurações JWT não encontradas",
       );
     }
-    
+
     const token = JWT.sign(jwtObj, secret, {expiresIn});
 
     console.log(`jwtPanda: JWT gerado com sucesso para ${data.name}`);
@@ -297,7 +410,9 @@ exports.jwtPanda = functions.https.onCall(async (data) => {
   }
 });
 
-exports.generateQRCode = functions.https.onCall(async (data) => {
+exports.generateQRCode = functions.runWith({
+  secrets: ["GERENCIANET_CLIENT_ID", "GERENCIANET_CLIENT_SECRET"],
+}).https.onCall(async (data) => {
   try {
     if (!data.id || !data.accessToken) {
       console.error("generateQRCode: Dados obrigatórios não fornecidos");
@@ -306,6 +421,22 @@ exports.generateQRCode = functions.https.onCall(async (data) => {
           "ID e accessToken são obrigatórios",
       );
     }
+
+    if (!certName) {
+      throw new functions.https.HttpsError(
+          "failed-precondition",
+          "Certificado GerenciaNet não configurado",
+      );
+    }
+
+    const cert = fs.readFileSync(
+        path.resolve(__dirname, `./certs/${certName}`),
+    );
+
+    const agent = new https.Agent({
+      pfx: cert,
+      passphrase: "",
+    });
 
     const endpoint = `${endPoint}/v2/loc/${data.id}/qrcode`;
 
@@ -347,6 +478,13 @@ exports.deletePandaVideo = functions.https.onCall(async (data) => {
       );
     }
 
+    if (!pandaAuth) {
+      throw new functions.https.HttpsError(
+          "failed-precondition",
+          "PANDA_AUTH_KEY não configurada",
+      );
+    }
+
     console.log(`deletePandaVideo: Deletando vídeo ${videoId}`);
     await axios.delete("https://api-v2.pandavideo.com.br/videos", {
       headers: {
@@ -381,8 +519,14 @@ exports.getPandaVideoInfo = functions.https.onCall(async (data) => {
       );
     }
 
+    if (!pandaAuth) {
+      throw new functions.https.HttpsError(
+          "failed-precondition",
+          "PANDA_AUTH_KEY não configurada",
+      );
+    }
+
     console.log(`getPandaVideoInfo: Buscando informações do vídeo ${pandaId}`);
-    console.log(`getPandaVideoInfo: Usando chave: ${pandaAuth}`);
     const response = await axios.get("https://api-v2.pandavideo.com.br/videos/" + pandaId, {
       headers: {
         Authorization: pandaAuth,
@@ -419,18 +563,52 @@ exports.uploadPandaVideo = functions.https.onCall(async (data) => {
       );
     }
 
+    if (!pandaAuth) {
+      throw new functions.https.HttpsError(
+          "failed-precondition",
+          "PANDA_AUTH_KEY não configurada",
+      );
+    }
+
+    const {Buffer} = require("buffer");
     const pandaId = require("uuid").v4();
 
-    // Criando metadata
-    const metadata = `authorization ${Buffer.from(pandaAuth).toString("base64")}
-    , filename ${Buffer.from(filename).toString("base64")},
-      video_id ${Buffer.from(pandaId).toString("base64")}`;
+    // Criando metadata (deve ser uma única linha sem quebras)
+    const authB64 = Buffer.from(pandaAuth).toString("base64");
+    const filenameB64 = Buffer.from(filename).toString("base64");
+    const videoIdB64 = Buffer.from(pandaId).toString("base64");
+    const metadata =
+        `authorization ${authB64},filename ${filenameB64},video_id ${videoIdB64}`;
 
-    const buffer = Buffer.from(fileBuffer, "binary");
+    // Limpar a string base64 removendo espaços, quebras de linha e
+    // outros caracteres inválidos
+    const cleanBase64 = fileBuffer.replace(/\s/g, "");
+
+    // Validar se é base64 válido
+    if (!/^[A-Za-z0-9+/]*={0,2}$/.test(cleanBase64)) {
+      console.error("uploadPandaVideo: String base64 inválida");
+      throw new functions.https.HttpsError(
+          "invalid-argument",
+          "String base64 inválida",
+      );
+    }
+
+    let buffer;
+    try {
+      buffer = Buffer.from(cleanBase64, "base64");
+    } catch (error) {
+      console.error(
+          "uploadPandaVideo: Erro ao converter base64 para Buffer:",
+          error);
+      throw new functions.https.HttpsError(
+          "invalid-argument",
+          "Erro ao processar base64: " + error.message,
+      );
+    }
 
     console.log(
         `uploadPandaVideo: Iniciando upload do arquivo ${filename} ` +
-        `com ID ${pandaId}`,
+        `com ID ${pandaId}, tamanho: ${buffer.length} bytes`,
     );
     await axios.post("https://uploader-us01.pandavideo.com.br/files", buffer, {
       headers: {

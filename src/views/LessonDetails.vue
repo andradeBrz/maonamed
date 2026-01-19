@@ -299,14 +299,26 @@ export default {
         _this.removeFromLoadingFiles(loadingId)
       })
     },
+    arrayBufferToBase64(arrayBuffer) {
+      const bytes = new Uint8Array(arrayBuffer);
+      let binary = '';
+      const chunkSize = 8192; // Processar em chunks para arquivos grandes
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        const chunk = bytes.subarray(i, i + chunkSize);
+        binary += String.fromCharCode.apply(null, chunk);
+      }
+      return btoa(binary);
+    },
     async callPandaAPI(filename, buffer){
       const functions = getFunctions();
       const uploadPandaVideo = httpsCallable(functions, "uploadPandaVideo");
       
       try {
+        // Converter ArrayBuffer para base64 antes de enviar
+        const base64String = this.arrayBufferToBase64(buffer);
         const result = await uploadPandaVideo({
           filename: filename,
-          fileBuffer: buffer
+          fileBuffer: base64String
         });
         return result.data.pandaId;
       } catch (error) {
