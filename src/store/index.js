@@ -750,10 +750,11 @@ export default createStore({
 				
 				data.lessons.forEach(lessonId => {
 					if (oldLessonsById[lessonId]) {
-						// Aula já existe - resetar views
-						const index = oldLessons.findIndex(lesson => lesson.lessonId == lessonId);
-						oldLessons[index].videos.forEach(video => video.views = 0);
-						existingLessons.push(oldLessons[index]);
+						const existing = oldLessonsById[lessonId];
+						existingLessons.push({
+							lessonId: existing.lessonId,
+							videos: (existing.videos || []).map((v) => ({ ...v })),
+						});
 					} else {
 						newLessonIds.push(lessonId);
 					}

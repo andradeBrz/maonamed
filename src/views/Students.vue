@@ -79,7 +79,7 @@ export default {
       }
     },  
     methods: {
-      ...mapActions(['updateUserFirestore']),
+      ...mapActions(['updateUserFirestore', 'changeLoadingState', 'changeLoadingMessage']),
       addUser: function(){
           this.$refs.UserModalRef.clearModal()
           this.openUserModal();
@@ -117,10 +117,16 @@ export default {
         })
       },
       linkLessons: async function(user){
-          let docRef = doc(db, 'Users', user.id);
-          let userRef = await getDoc(docRef);
-          this.$refs.UserLessonModal.setUserOnModal({id: user.id, ...userRef.data()})
-          this.openUserLessonModal();
+          this.changeLoadingMessage('Carregando vínculo de aulas…');
+          this.changeLoadingState();
+          try {
+            let docRef = doc(db, 'Users', user.id);
+            let userRef = await getDoc(docRef);
+            await this.$refs.UserLessonModal.setUserOnModal({id: user.id, ...userRef.data()});
+            this.openUserLessonModal();
+          } finally {
+            this.changeLoadingState();
+          }
       },
       getStudents: function(){
         let localQuery = query(collection(db, "Users"), orderBy("name"))

@@ -551,12 +551,26 @@ exports.getPandaVideoInfo = functions.https.onCall(async (data) => {
   }
 });
 
-exports.uploadPandaVideo = functions.https.onCall(async (data) => {
+exports.uploadPandaVideo = functions.runWith({
+  timeoutSeconds: 540,
+  memory: "1GB",
+}).https.onCall(async (data) => {
   try {
+    console.log("uploadPandaVideo: Recebendo dados", {
+      filename: data?.filename,
+      fileBufferLength: data?.fileBuffer?.length || 0,
+      fileBufferType: typeof data?.fileBuffer,
+      dataKeys: Object.keys(data || {}),
+    });
+
     const {filename, fileBuffer} = data;
 
     if (!filename || !fileBuffer) {
-      console.error("uploadPandaVideo: Dados de upload inválidos");
+      console.error("uploadPandaVideo: Dados de upload inválidos", {
+        hasFilename: !!filename,
+        hasFileBuffer: !!fileBuffer,
+        fileBufferLength: fileBuffer?.length || 0,
+      });
       throw new functions.https.HttpsError(
           "invalid-argument",
           "Filename e fileBuffer são obrigatórios",
@@ -630,6 +644,50 @@ exports.uploadPandaVideo = functions.https.onCall(async (data) => {
     throw new functions.https.HttpsError(
         "internal",
         "Falha no upload do vídeo",
+        error,
+    );
+  }
+});
+
+// Função para obter credenciais para upload direto (contorna limite de 256KB)
+exports.getPandaUploadCredentials = functions.https.onCall(async (data) => {
+  try {
+    const {filename} = data;
+
+    if (!filename) {
+      throw new functions.https.HttpsError(
+          "invalid-argument",
+          "Filename é obrigatório",
+      );
+    }
+
+    if (!pandaAuth) {
+      throw new functions.https.HttpsError(
+          "failed-precondition",
+          "PANDA_AUTH_KEY não configurada",
+      );
+    }
+
+    const {Buffer} = require("buffer");
+    const pandaId = require("uuid").v4();
+
+    // Criando metadata (deve ser uma única linha sem quebras)
+    const authB64 = Buffer.from(pandaAuth).toString("base64");
+    const filenameB64 = Buffer.from(filename).toString("base64");
+    const videoIdB64 = Buffer.from(pandaId).toString("base64");
+    const metadata =
+        `authorization ${authB64},filename ${filenameB64},video_id ${videoIdB64}`;
+
+    return {
+      pandaId,
+      metadata,
+      uploadUrl: "https://uploader-us01.pandavideo.com.br/files",
+    };
+  } catch (error) {
+    console.error("getPandaUploadCredentials: Erro:", error);
+    throw new functions.https.HttpsError(
+        "internal",
+        "Falha ao obter credenciais",
         error,
     );
   }

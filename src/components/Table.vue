@@ -7,7 +7,7 @@
             </tr>
         </thead>
         <tbody class="table-body">
-            <tr v-for="obj in content" :key="obj.key">
+            <tr v-for="(obj, rowIndex) in content" :key="rowTrackKey(obj, rowIndex)">
                 <td v-for="col in structure"  :key="col.id" >{{ obj[col.key] }} </td>
                 <td v-if="actions">
                     <div class="linkBtnDiv custom_tooltip" @click="$emit('link', obj)">
@@ -44,7 +44,7 @@
                 </td>
                 <td v-if="check">
                     <div class="form-check">
-                        <input class="form-check-input" type="checkbox" @change="$emit('checkChange', obj)" :checked="checkedLessons.indexOf(obj.id) != -1" id="defaultCheck1">
+                        <input class="form-check-input" type="checkbox" @change="$emit('checkChange', obj)" :checked="checkedLessons.indexOf(obj.id) != -1" :id="'table-check-' + rowTrackKey(obj, rowIndex)">
                     </div>
                 </td>
                 
@@ -55,6 +55,14 @@
 
 <script>
 export default {
+    methods: {
+        rowTrackKey(obj, rowIndex) {
+            if (obj == null) return `row-${rowIndex}`;
+            if (obj.id != null && obj.id !== '') return String(obj.id);
+            if (obj.key != null && obj.key !== '') return String(obj.key);
+            return `row-${rowIndex}`;
+        },
+    },
     props:{
         content: {
             type: Array

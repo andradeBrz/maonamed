@@ -311,6 +311,42 @@ export default {
     },
     async callPandaAPI(filename, buffer){
       const functions = getFunctions();
+      const MAX_PAYLOAD_SIZE = 190 * 1024; // ~190KB em base64 = ~256KB payload
+      
+      // Para arquivos grandes, fazer upload direto para o Panda
+      if (buffer.byteLength > MAX_PAYLOAD_SIZE) {
+        try {
+          // Obter credenciais da function
+          const getCredentials = httpsCallable(functions, "getPandaUploadCredentials");
+          const credentialsResult = await getCredentials({ filename });
+          const { pandaId, metadata, uploadUrl } = credentialsResult.data;
+          
+          // Fazer upload direto para o Panda usando TUS protocol
+          const response = await fetch(uploadUrl, {
+            method: 'POST',
+            headers: {
+              'Tus-Resumable': '1.0.0',
+              'Upload-Length': buffer.byteLength.toString(),
+              'Content-Type': 'application/offset+octet-stream',
+              'Upload-Metadata': metadata,
+            },
+            body: buffer,
+          });
+          
+          if (!response.ok) {
+            throw new Error(`Upload failed: ${response.status} ${response.statusText}`);
+          }
+          
+          return pandaId;
+        } catch (error) {
+          console.error('Erro no upload direto:', error);
+          this.changeLoadingState();
+          this.errorSwal(error);
+          throw error;
+        }
+      }
+      
+      // Para arquivos pequenos, usar a function existente
       const uploadPandaVideo = httpsCallable(functions, "uploadPandaVideo");
       
       try {

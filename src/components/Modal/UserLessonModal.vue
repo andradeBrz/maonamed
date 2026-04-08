@@ -78,7 +78,16 @@ export default {
             this.student.name = user.name;
             try {
                 const lessons = await this.getLessonsById({userId: user.id});
-                let filteredLessons = lessons.filter(lesson => !lesson.videos.find(video => video.views != '0'));
+                // views no user = usos consumidos por vídeo; restantes = 4 - views (vide Lesson.vue / MyLessons).
+                // Aulas em que todos os vídeos esgotaram a cota (>= 4) ficam de fora e serão desvinculadas ao salvar.
+                const VIEW_CAP = 4;
+                const filteredLessons = lessons.filter(lesson =>
+                    (lesson.videos || []).some((v) => {
+                        const parsed = parseInt(v.views, 10);
+                        const used = Number.isNaN(parsed) ? 0 : parsed;
+                        return used < VIEW_CAP;
+                    })
+                );
                 this.lessonsIds = filteredLessons.map(lesson => lesson.lessonId);
             } catch (error) {
                 console.error('Erro ao buscar aulas do usuário:', error);
