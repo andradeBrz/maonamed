@@ -266,14 +266,13 @@ export default createStore({
 
 			user.email = user.email.toLowerCase(); 
 
-			createUserWithEmailAndPassword(auth, user.email, user.password).then( async credential => {
-				const docRef = doc(db, 'Users', credential.user.uid)
-				const studentToSet = {...user};
-				delete studentToSet.id;
-				delete studentToSet.password;
+			const credential = await createUserWithEmailAndPassword(auth, user.email, user.password);
+			const docRef = doc(db, 'Users', credential.user.uid)
+			const studentToSet = {...user};
+			delete studentToSet.id;
+			delete studentToSet.password;
 
-				await setDoc(docRef, { ...studentToSet }, { merge: true })
-			})
+			await setDoc(docRef, { ...studentToSet }, { merge: true })
 			
 		},
 		updateUser: async function(_, user){

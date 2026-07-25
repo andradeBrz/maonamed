@@ -76,21 +76,62 @@ export default {
             this.modalType == 'add' ? this.internAddUser() : this.internUpdateUser()
         },
         internAddUser: async function(){
-            this.addUser(this.student).then(() => this.$emit('hideModal')).catch(message => {
+            this.addUser(this.student).then(() => {
+                this.$emit('hideModal');
+                this.$swal({
+                    toast: true,
+                    position: 'top-end',
+                    showConfirmButton: false,
+                    timer: 3000,
+                    icon: 'success',
+                    title: 'Aluno adicionado com sucesso!',
+                    timerProgressBar: true,
+                });
+            }).catch(error => {
+                let errorMessage = error.message;
+                if (error.code === 'auth/email-already-in-use') {
+                    errorMessage = 'Este e-mail já está em uso.';
+                } else if (error.code === 'auth/weak-password') {
+                    errorMessage = 'A senha deve ter pelo menos 6 caracteres.';
+                } else if (error.code === 'auth/invalid-email') {
+                    errorMessage = 'E-mail inválido.';
+                }
+
                 this.$swal({
                     toast: true,
                     position: 'top-end',
                     showConfirmButton: false,
                     timer: 3000,
                     icon: 'error',
-                    title: message,
+                    title: errorMessage,
                     timerProgressBar: true,
                 });
             })
         },
         internUpdateUser: function(){
             delete this.student.password;
-            this.updateUser(this.student).then(() => this.$emit('hideModal'))
+            this.updateUser(this.student).then(() => {
+                this.$emit('hideModal');
+                this.$swal({
+                    toast: true,
+                    position: 'top-end',
+                    showConfirmButton: false,
+                    timer: 3000,
+                    icon: 'success',
+                    title: 'Aluno atualizado com sucesso!',
+                    timerProgressBar: true,
+                });
+            }).catch(error => {
+                this.$swal({
+                    toast: true,
+                    position: 'top-end',
+                    showConfirmButton: false,
+                    timer: 3000,
+                    icon: 'error',
+                    title: error.message,
+                    timerProgressBar: true,
+                });
+            })
         },
         setUserOnModal: function(user){
             this.student.id = user.id;

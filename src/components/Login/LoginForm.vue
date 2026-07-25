@@ -250,13 +250,22 @@ export default ({
                 this.singningUp = false;
             }
             catch(error){
+                let errorMessage = error.message;
+                if (error.code === 'auth/email-already-in-use') {
+                    errorMessage = 'Este e-mail já está em uso.';
+                } else if (error.code === 'auth/weak-password') {
+                    errorMessage = 'A senha deve ter pelo menos 6 caracteres.';
+                } else if (error.code === 'auth/invalid-email') {
+                    errorMessage = 'E-mail inválido.';
+                }
+
                 this.$swal({
                     toast: true,
                     position: 'top-end',
                     showConfirmButton: false,
                     timer: 3000,
                     icon: 'error',
-                    title: error.message,
+                    title: errorMessage,
                     timerProgressBar: true,
                 });
 
@@ -271,6 +280,10 @@ export default ({
                 await signInWithEmailAndPassword(auth, this.email.toLowerCase(), this.password);
                 const user = await this.getUserByEmail(this.email);
                 
+                if (!user) {
+                    throw new Error("Usuário não encontrado no banco de dados.");
+                }
+
                 localStorage.setItem("userId", user.id);
                 localStorage.setItem("user", JSON.stringify({uid: user.id, ...user}));
                 this.$router.push({ name: "Home" });
@@ -282,8 +295,27 @@ export default ({
                         this.emailErrorMessage = "Email inválido."
                     break; 
                     case 'auth/wrong-password':
+                    case 'auth/invalid-credential':
                         this.passwordErrorMessage = "Senha incorreta."    
                     break; 
+                    case 'auth/user-not-found':
+                        this.emailErrorMessage = "Usuário não encontrado."
+                    break;
+                    default:
+                        if (!error.code && error.message) {
+                            this.$swal({
+                                toast: true,
+                                position: 'top-end',
+                                showConfirmButton: false,
+                                timer: 3000,
+                                icon: 'error',
+                                title: error.message,
+                                timerProgressBar: true,
+                            });
+                        } else {
+                            this.passwordErrorMessage = "Erro ao fazer login."
+                        }
+                    break;
                 }
             }
         },
